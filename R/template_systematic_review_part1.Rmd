@@ -1,0 +1,574 @@
+---
+title: "Systematic_review_part1"
+author: "evezeyl"
+date: "2/20/2020"
+output: html_document
+---
+
+
+# PRISMA systematic review
+Aim here is to help do a systematic literature review. You can read more here: 
+- [PRISMA website](http://www.prisma-statement.org/)
+- [PRISMA checklist](http://www.prisma-statement.org/PRISMAStatement/Checklist)
+- [PRISMA flow diagram](http://www.prisma-statement.org/PRISMAStatement/FlowDiagram)
+- [PRISMA statement](http://www.prisma-statement.org/PRISMAStatement/PRISMAStatement): 
+provide links to one review paper with examples and information of how to do a systematic review. Links provided to the same article published in different journals - choose one!
+
+You can also read [here](http://meta-evidence.co.uk/systematic-review-meta-analysis-and-r/): this is our source of inspiration, and the R-modules we will use 
+
+This notebook implement tools to help:
+- 1. refine research question, find associations between keywords that will be required
+to do the systematic review, i.e. the preparation to the systematic review
+- 2. provide guide and semi-automation (we automate as much as possible) the procedure we have to follow
+to perform the systematic review and reporting of it
+- 3. Build the flow diagram automatically
+
+So this notebook will gide you through the process. Following preparation and PRISMA checklist 
+
+What you need to do: **Make a copy of the notebook**, open and save in a different name. 
+
+Delete the explanations when you are ready to finish the report of the systematic review, 
+and use the knit button to produce your report.
+
+The packages we will be using are:
+[litsearch](https://elizagrames.github.io/litsearchr/): to help us define approprioate keywords, 
+that we will use in our systematic review. This package will therefore only be used to ease preparation
+of our systematic review.
+
+NB: `litsearch` is a part of the [`rmetaverse` ecosystem](https://rmetaverse.github.io/posts/).   
+
+# Setting up your environment
+
+- Do not delete the boxes within ``` bellow, they will not show up in your report, 
+but are necessary for our setup. It might be a bit long to run on the first time you are using the package. 
+
+NB: You are allowed to delete present text, outside the boxes
+
+
+```{r Setup-packages, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("/home/evezeyl/Dropbox/GITS/Pipeline_Listeria/evfi/src/systematic_review_functions.R")
+```
+
+Making sure the packages were installed sucessfully: Run: It should return 
+```{r setup_checking}
+knitr::opts_chunk$set(include = FALSE)
+if ("litsearchr" %in% p_loaded()) {
+    print("litsearchr is succesffully loaded")} else {print("ask for help")}
+```
+
+
+# [Formulating the research question](http://meta-evidence.co.uk/formulating-research-question/)
+
+PICO
+
+
+# Preliminary: writing the search strategy: with [`litsearchr`](https://elizagrames.github.io/litsearchr/#/about)
+
+We will use `litsearch` to help us identify important keywords
+- the search work in 15 commonly used search databases
+- the aim is to help identify terms commonly used in a field (automating keyworkd selection)
+
+## Naive search
+
+We will basically follow the process explained in the [vignette](https://elizagrames.github.io/litsearchr/litsearchr_vignette_v030.html) vignette (here a startup tutorial), with 
+slight modifications for our purpose. 
+
+Ex: search in "pubmed" `'listeria monocytogenes' AND ('whole genome' OR 'WGS' OR 'sequencing') AND ('pipeline' OR 'outbreak' OR 'survey' OR 'monitoring' OR 'typing' OR 'epidemiology' OR 'food' OR 'listeriosis' OR 'cluster' OR 'cgMLST' OR 'phylogeny) AND 2010[PDAT] : 2020[PDAT]` 
+
+```{r}
+#nb_results_preliminary_search
+
+```
+
+
+NB: [Filters in "pubmed" ](https://www.ncbi.nlm.nih.gov/books/NBK3827/) - Also get suggestion if this might be incorrect
+
+This returned 706 results. 
+We need to export those results so we can use them to find relevant keywords and associations between keywords to be
+able to do a more thourhought search among several databases later on. 
+- We saved abstracts for all results: in `.ris` but you should be able to save in `bib` [export guidelines pubmed](https://guides.lib.berkeley.edu/pubmed-more-search-tips/save-and-export)
+
+-[] possibility to use revtools for that???
+
+> if you have more than 200 records:
+you will have to import that in your reference manager (in several batches) and then export the total in one file
+> NB: have a directory with only this file, otherwise the import might not functione, 
+save in Unicode UTF-8 format
+
+```{r define_paths_search}
+# Put here your directory (/ at the end) and file na,e
+my_search_directory <- "/home/evezeyl/Dropbox/GITS/Pipeline_Listeria/evfi/search/"
+my_search_file <- "pubmed_result.ris"
+```
+
+
+```{r import_deduplicate}
+import_search <- litsearchr::import_results(file =  paste(my_search_directory, my_search_file, sep = "/"), verbose = TRUE)
+# Original function was not really functional yet - directory synthax not working
+# so modified to arrabge equivalent
+no_duplicates <- synthesisr::deduplicate(import_search, match_by = "title", match_function = "stringdist", to_lower = TRUE, rm_punctuation = TRUE)
+
+nb_results_preliminary_search <- nrow(no_duplicates)
+```
+
+### 1. Identifying potential keywords
+
+- extract all potential keywords from article titles, abstracts of other fields (if passed to function)
+
+1. (optional) Extract keywords that are tagged as keyword in the searched database
+```{r}
+tagged_keywords <- 
+    litsearchr::extract_terms(
+    keywords = no_duplicates$keywords,
+    method = "tagged",
+    min_freq = 2,
+    ngrams = TRUE,
+    min_n = 2,
+    language = "English")
+```
+
+2. Extract keywords found in title and abstract. 
+> NB: might take some time depending on the number of records you want to extract from
+
+We used the `fakerake`function that approxiamtes RAKE algorithm described in (Rose et al. 2010), 
+as explained by `litearch`author in the [vignette](https://elizagrames.github.io/litsearchr/litsearchr_vignette_v030.html)
+at 
+```{r}
+infered_keywords <-
+  litsearchr::extract_terms(
+    text = paste(no_duplicates$title, no_duplicates$abstract),
+    method = "fakerake",
+    min_freq = 2,
+    ngrams = TRUE,
+    min_n = 2,
+    language = "English"
+  )
+```
+
+### 2. Building co-occurence network 
+
+Identify potential keyword that we will be able to use for our PRISMA search.
+This is done by creating a co-occurence network.
+
+If you want to use both the data-base tagged keywords run this as is (run_all <- TRUE), 
+so put # in front of the other choice
+
+If you only want to run only with keywords infered from abstract and title: # the line with `TRUE`
+
+```{r choice keywords}
+run_all <- TRUE
+#run_all <- FALSE
+```
+
+
+```{r naive search}
+if (run_all) {
+    all_keywords <- unique(append(infered_keywords, tagged_keywords))
+} else {
+    all_keywords <- unique(infered_keywords)
+    }
+        
+
+naivedfm <-
+  litsearchr::create_dfm(
+    elements = paste(no_duplicates$title, no_duplicates$abstract),
+    features = all_keywords
+  )
+
+naivegraph <-
+  litsearchr::create_network(
+    search_dfm = as.matrix(naivedfm),
+    min_studies = 2,
+    min_occ = 2
+  )
+```
+
+### 3. Identify change points in keyword importance
+
+Now we need a way to filter all those keywords by importance, choosing a cutoff. 
+You can adjust the cuttoff to your needs.
+
+This should help define search terms that are not central to our field of study. 
+
+!Node strength is designed as node importance. They are ranked by importance
+!The cutoff `imp_method` can be set either to `strength`or `cumulative`
+
+!- use `strength`when you have a clear cutoff as bellow (long tail of many nodes of little importance)
+- use `cumulative` when you have a more evently distributed node importance
+! need to undestand better here
+In this case, we left it at the default of 80%. Diagnostics for the cumulative curve are not actually diagnostic and simply show the cutoff point in terms of rank and strength.
+
+
+```{r}
+# histogram of nodes strength
+#p_load(igraph)
+hist(igraph::strength(naivegraph), 100, main="Histogram of node strengths", 
+     xlab = "Node strength", ylab = "Count")
+```
+
+
+Choose your method and run ..?
+
+
+- node importance : unique, that are not central to a field of study, so we remove 
+terms that are not essential
+
+
+
+```{r filtering_nodes_by_strength}
+my_imp_method <- "strength"
+used_cutoff <- .80
+cutoff <-
+  litsearchr::find_cutoff(
+    naivegraph,
+    method = "cumulative",
+    percent = used_cutoff,
+    imp_method = my_imp_method
+  )
+
+reducedgraph <-
+  litsearchr::reduce_graph(naivegraph, cutoff_strength = cutoff[1])
+
+searchterms <- litsearchr::get_keywords(reducedgraph)
+```
+
+How many keywords do we have?
+```{r nunber_keywords}
+#length(searchterms)
+# equivalent
+keywords_to_review <- vcount(reducedgraph)
+print(keywords_to_review)
+```
+
+Here are the first 20 search terms
+
+```{r}
+head(searchterms, 20)
+```
+
+## 4. Grouping terms into concepts
+- groupping into blocks to build the search strategy
+- we will have to do that manually 
+- group together items belonging to the same concept:
+    - same group will be searched by OR
+    - separate blocks will be searched by AND 
+
+We create a table for you: and export it as "csv" so you can open it in excel 
+- you will fill group (note ideas per group)
+- if you want to not to use the keyword (T for use, F for not using)
+- and the reasonning for using - not using. (try to be-consistent): ie relevant, irrelevant <because>
+> then if you are unsure you can also search what the keyword is
+
+Creating a table with keywords and ranked node strenght (decreasing) 
+
+```{r Creating the table}
+#tkplot(reducedgraph)
+#plot.igraph(reducedgraph)
+#degree(reducedgraph, mode = "total")
+sorted <- as.data.frame(sort(igraph::strength(reducedgraph), decreasing = T), row.names = NULL)
+sorted <- cbind(row.names(sorted), data.frame(sorted, row.names = NULL))
+colnames(sorted) <- c("keyword", "strength_nodes")
+sorted[, c("group", "keep_keyword", "reason", "retained_keyword")] <- NA
+```
+
+```{r exporting table}
+write.table(sorted, file = "naive_keywords.csv", quote = F, sep = ",", col.names = NA)
+```
+
+You can now open the file in your favorite spreadsheet program and select your keywords. 
+We introduced "NA" for all the empty fields you will have to review. 
+- try to be consistent in your use of criteria and group definine - reason can be more flexible
+but some consistency in the way you phrase this is recommended. 
+
+Note: to insure that you were thourough, we will use a filter that wont allow you to import 
+the filled spread sheet is there is still NA. (That is to help you be thourough, not to punish you!)
+
+
+# Strategy for grouping items and reviewing relevance of keywords
+> You can write here your notes- Bellow is an little example
+> you will note that sometimes its not easy to keep or not keyword.
+We suggest that you go through a first round, and they re-go throuhg those you are not sure for afterwards
+(ie particularly what you demed as accessory - you might find very similar "keywords in different combinations)
+3
+- This might feel useless - but that actually makes you think witch keywords will be the most important for your search
+(but yes some are just useless ie verbose). Remember: that you do not choose the keyword does not mean that you will not find 
+a study with that - it just means that you are narrowing your keywords to find more exacly those that fit perfectly in the scope of your research0
+! insert
+
+> my groups
+for all non kept keywords: 0
+absolutely essential: 1
+essential : 2 -> those keywords will be combined with AND
+accessory : 3 -> those keywords will be combined with OR
+
+
+> keep_keyword: T (True) or F (False)
+
+> reasons
+- irrelevant
+- redundant
+- essential
+- accessory (ie one of the method that can be used for analysis)
+- too specific 
+
+Advise: go fast against t the list - and assign groups (then when you see redundancy assign 0)
+then filter away the removed at first then go again the list to be sure redudancy and concepts grouped together (you can ie make subgroups)
+
+```{r define our keywords}
+# ! that work you will have to do - if you choose * do not put them before end word 
+# do not use * for keywords that did not exist 
+# Mandatory
+mandatory <- c("Listeria monocytogenes")
+#Essential
+complete_genome_keywords <- c("whole genom*", "core genome", "complete genome", 
+                              "hight-throughput", "next-generation sequenc*", "genome sequenc*")
+
+epidemiology_keywords <- c("surveillance", "outbreak", "molecular epidemio*", 
+                        "genomic epidemi*",  "epidem*", "persisten*", "survey", 
+                        "outbreak management", "monitoring")
+# accessory
+insitute_keywords <- c("national reference laboratory", "public health laborator*")
+
+typing_keywords <- c("cgMLST", "clonal complex", "molecular typing", "sequence typing" )
+
+analyses_keywords <- c("clonal group", "cluster", "related*", "snp", 
+                       "single nucleotide polymorphism", "phylogen*", "phylogenetic analysis")
+
+bioinformatics_keywords <- c("bioinformatic*", "pipeline", "software")
+
+#excluded_keywords <-c("this is not!") # OPTIONAL
+#epidemio left aside: "detection"  too vague   
+#"control strategies"    "epidemiological investigation" covered by other
+# "source tracking" an application
+#"multiple state" "epidemic clone" covered "sporadic*" outbreak description
+#"production" "food process*" "food safety" "ready-to-eat" "processing plant" "processing facility" "production facility"
+#"processing environment" # we do not want to restrict and they should be covered
+```
+
+
+
+## Creating our search sentence (bolean search) 
+NB Database search motor - you will need to look for each database specificyity
+
+### Note about "" around keywords and "*" wildcards truncation
+[Pubmed](https://www.nlm.nih.gov/bsd/disted/pubmedtutorial/020_460.html)
+- do not recommende truncation (use of wildcards) - if use: at end of word
+- do not use quotes around search terms (at least a first try without quotes)
+- abscence search tags -> all fields
+
+? mesh turms ? pubmed extension of medline -> keywords -> 
+
+- !not terms
+> ? implement??
+- quotes around keywords: option or not for some searhc databases
+> you need to know how your search database is working
+
+```{r}
+# if used wildcards in definitions of your groups you can use this function to re-expand the definition
+complete_genome_keywords <- extend_keywords_group(complete_genome_keywords, all_keywords)
+epidemiology_keywords <- extend_keywords_group(epidemiology_keywords, all_keywords)
+insitute_keywords <- extend_keywords_group(insitute_keywords, all_keywords)
+analyses_keywords <- extend_keywords_group(analyses_keywords, all_keywords)
+bioinformatics_keywords <- extend_keywords_group(bioinformatics_keywords, all_keywords)
+```
+
+```{r make your choice: classification}
+# you need to adjust this
+my_mandatory <- list(mandatory) # incase want several mandatory
+my_essential <- list(complete_genome_keywords, epidemiology_keywords)
+my_accessory <- list(insitute_keywords,typing_keywords,analyses_keywords, bioinformatics_keywords)
+#my_excluded <- list(excluded_keywords) # optional
+```
+
+```{r}
+# Building the search string
+build_search_string(my_mandatory, my_essential, my_accessory, excluded = NULL, quote_option = F)
+```
+
+If you want to to a more simple search: you can use `litsearch::write_search`function: here OR within groups, AND between groups
+(has additional function if want in other languages, but simplified strategy for boloeans). Might not be worse
+
+```{r Other_solution, eval=FALSE, include=FALSE}
+my_pubmed_noquotes <- build_search_string(my_mandatory, my_essential, my_accessory, quote_option = F)
+```
+
+
+
+# PRISMA Systematic litterature search
+
+- no totally automatic tool to search for a selection of databases ... (it is possible but will required writting a package so, not for now!) 
+So, we unfortunately we will have to do our searches manually. (NB see also full-text-search for full text)
+
+```{r}
+# class definition
+# db_name: name database (if try several seach can give several numbers)
+# src:  database url
+# date - extracted from system
+# search - extracted from our parameter
+# tsearch - ie pubmed re-transform our search - so we can glue here the transformation
+# nb : number of hits from this search
+setClass("searched_database", slots = c(db_name = "character", src = "character", date = "Date", 
+                                        search = "character", tsearch = "character", nb = "numeric"))
+
+
+pubmed <- new("searched_database", db_name= "PubMed" , src = "https://www.ncbi.nlm.nih.gov/pubmed/", date = Sys.Date(),  search = my_pubmed_noquotes, nb =165)
+
+# comparison with quotes - Did not find anything!
+#my_pubmed_quotes <- build_search_string(my_mandatory, my_essential, my_accessory, quote_option = T)
+#pubmed_quotes <- new("searched_database", src = "pubmed", date = Sys.Date(),  search = my_pubmed_noquotes, nb =165)
+
+#removing the  * and looking if get more results 
+mandatory2 <- c("Listeria monocytogenes")
+#Essential
+complete_genome_keywords2 <- c("whole genome", "core genome", "complete genome", 
+                              "hight-throughput", "next-generation sequencing", "genome sequencing")
+
+epidemiology_keywords2 <- c("surveillance", "outbreak", "molecular epidemiology", 
+                        "genomic epidemiology",  "epidemic", "epidemiologic", "epidemiological", "epidemio", "epidemiology", 
+                        "persistence", "survey", 
+                        "outbreak management", "monitoring")
+# accessory
+insitute_keywords2 <- c("national reference laboratory", "public health laboratory")
+
+typing_keywords2 <- c("cgMLST", "clonal complex", "molecular typing", "sequence typing" )
+
+analyses_keywords2 <- c("clonal group", "cluster", "related", "relatedness", "snp", 
+                       "single nucleotide polymorphism", "phylogeny", "phylogenetic", "phylogenetic analysis")
+
+bioinformatics_keywords2 <- c("bioinformatics", "pipeline", "software")
+
+my_mandatory2 <- list(mandatory2) # incase want several mandatory
+my_essential2 <- list(complete_genome_keywords2, epidemiology_keywords2)
+my_accessory2 <- list(insitute_keywords2,typing_keywords2,analyses_keywords2, bioinformatics_keywords2)
+
+my_pubmed_noquotes2 <- build_search_string(my_mandatory2, my_essential2, my_accessory2, quote_option = F)
+
+pubmed2 <- new("searched_database", src = "pubmed", date = Sys.Date(),  search = my_pubmed_noquotes2, nb =171)
+# so few additional records - does not seems to deal perfectly with that ! 
+
+#search_fields 
+#[TIAB] # could be used to limite
+
+# If only quote Listeria monocytogenes -> 168 so not huge difference
+# could play around but not really time ..
+
+```
+
+
+
+```{r}
+# import revtools
+p_load_gh("mjwestgate/revtools", dependencies = T)
+
+```
+
+
+## Searching in databases
+
+We used package `litsearch`to search within databases
+
+
+# Importing and screening for duplicates
+
+```{r include=FALSE}
+#p_load_gh("massimoaria/bibliometrix", dependencies = T)
+#p_load("bib2df")
+#pmed <- 
+#gscholar <- bib2df::bib2df("/home/evezeyl/Dropbox/GITS/Pipeline_Listeria/evfi/search/gscholar-2020-02-26.bib")
+#pubmed <- bib2df::bib2df("/home/evezeyl/Dropbox/GITS/Pipeline_Listeria/evfi/search/Pubmed-2020-02-26.bib")
+# cannot combine - not same columns
+# so combined in zotero and exported as ris instead 
+
+total <- litsearchr::import_results(file = "/home/evezeyl/Dropbox/GITS/Pipeline_Listeria/evfi/search/total_systematic-2020-02-26.ris", verbose = TRUE)
+rows(total)
+# 320 results
+# Original function was not really functional yet - directory synthax not working
+# so modified to arrabge equivalent
+#dstring # 304 
+#total_dedup <- synthesisr::deduplicate(total, match_by = "title", match_function = "stringdist", to_lower = TRUE, rm_punctuation = TRUE)
+
+#dfuzzy # 306 total
+# synthesisr::deduplicate(total, match_by = "title", match_function = "fuzzdist", to_lower = TRUE, rm_punctuation = TRUE)
+
+orion_previous <- litsearchr::import_results(file = "/home/evezeyl/Dropbox/GITS/Pipeline_Listeria/evfi/search/ORION-Listeria-Pipeline.ris", verbose = TRUE)
+nrow(orion_previous)
+# 100 in orion previous
+
+# Finding common colomns
+common_col <- Reduce(intersect, list(colnames(total), colnames(orion_previous)))
+# joining those datasets
+p_load(plyr)
+merged <- plyr::join(total[, common_col], orion_previous[, common_col], type = "full")
+nrow(merged) #419
+
+merged_dedup <- synthesisr::deduplicate(merged, match_by = "title", match_function = "stringdist", to_lower = TRUE, rm_punctuation = TRUE)
+nrow(merged_dedup) #378
+```
+
+Create a copy of this table before modifying will be the table for screening
+
+```{r}
+table_for_screening <- copy(merged_dedup)
+
+# adding columns that we will have to fill
+# TA relevance screen : Title Abstract Relevance Screen Exclusion Criteria
+# FT full text inclusde (T/F) -> decide if include for full text reading  
+# FT_exclusion_criteria -> reading/screening full ext -> decide to include or exclude
+# FT_excluded: T/F 
+table_for_screening[ , c("TA_RSE_crieteria", "FT_include", "FT_exclusion_criteria", "FT_excluded")] <- NA
+
+# have to export with special delimiter otherwise not read proprely!
+# maximum nb character exceeded for libre office but works to import in google sheets (has to import)
+write.table(table_for_screening, file = "table_for_screening.csv", 
+          quote = F, sep = "@" , row.names = F)
+
+#and then that does not work because too many! characters in cell! 
+# need to write the interactive function
+
+```
+
+
+
+#################################################################################
+> Now that you understood, you can see in part 2 for a actuall template report of the full search!
+
+# A [world cloud](https://towardsdatascience.com/create-a-word-cloud-with-r-bde3e7422e8a) for your rapport? 
+
+# References
+[this old vignette link](https://elizagrames.github.io/litsearchr/introduction_vignette_v010.html)
+
+[bib2df](https://cran.r-project.org/web/packages/bib2df/vignettes/bib2df.html)
+
+[easyPubMed](https://cran.r-project.org/web/packages/easyPubMed/easyPubMed.pdf)
+
+# Other tools?
+[RISmed package](https://cran.r-project.org/web/packages/RISmed/RISmed.pdf): to extract bibliographic content from NCBI databases (not for reference management)
+[revtools](https://github.com/mjwestgate/revtools) import and combine different type of bibliographic data - loxates abd remove duplicates
+
+[RefManageR](https://cran.r-project.org/web/packages/RefManageR/RefManageR.pdf) importing and working with bibliographic references - incl zotero interface
+
+[full-text-search](https://cran.r-project.org/web/packages/fulltext/fulltext.pdf)
+
+[write_bib](https://rdrr.io/cran/knitr/man/write_bib.html)
+
+https://cran.r-project.org/web/packages/bibliometrix/vignettes/bibliometrix-vignette.html
+
+[bibliography with cross-ref-article](https://www.r-bloggers.com/creating-a-bibliography-with-rcrossref/)
+
+https://marionlouveaux.fr/blog/bibliography-analysis/
+
+[APIs information](https://guides.lib.berkeley.edu/information-studies/apis)
+[ex API access in R](https://www.earthdatascience.org/courses/earth-analytics/get-data-using-apis/API-data-access-r/)
+
+[bibliometrix](https://github.com/massimoaria/bibliometrix/)
+Dictionary search - 
+I know three R packages for dictionaries: hash, hashmap, and dict.
+Update July 2018: a new one, container.
+Update September 2018: a new one, collections
+
+https://cran.r-project.org/web/packages/container/vignettes/overview.html
+https://randy3k.github.io/collections/index.html
+#creating my dictionary 
+p_load("collections")
+

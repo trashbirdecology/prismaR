@@ -1,0 +1,461 @@
+---
+title: "Systematic literature review for <i>Listeria monocytogenes</i>"
+author: "evezeyl"
+date: "2/20/2020"
+output: html_document
+bibliography: bibliography.bibtex
+---
+
+> this part is the systematic review itself, will use this notebook to print the report
+> same guidelines as previously
+
+```{r Setup-packages, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("/home/evezeyl/Dropbox/GITS/Pipeline_Listeria/evfi/src/systematic_review_functions.R")
+```
+
+
+# Objectives
+
+- we want to review methods and pipelines that are used for surveillance and 
+outbreak detection of *Listeria monocytogenes* pathogen using whole genome data.
+- We want to design our own pipeline and therefore need some background on what 
+has been done and what are the recommendred methods used, and why they have been
+choosen (advantages over other methods, pitfalls of other methods, consistency 
+to allow comparison between institutions and sharing of data)
+- Choice of method and pipeline must be compatible with ECD-EFSA own pipeline
+
+# Definining **literature relevance criteria**: with a preliminary search
+
+To be able to identify most relevant keywords for our search strategy, we did a 
+preliminary search (providing all preliminary keywords that we thought could be 
+usefull to fullfill our goals) using "Pubmed" database. 
+
+We restricted our search to 2010-2020 (now) as this is when the usage of whole 
+genome sequencing was highest.
+
+Our preliminary search sentense was build as following: 
+```{text}
+'listeria monocytogenes' AND ('whole genome' OR 'WGS' OR 'sequencing') AND 
+('pipeline' OR 'outbreak' OR 'survey' OR 'monitoring' OR 'typing' OR 'epidemiology' 
+OR 'food' OR 'listeriosis' OR 'cluster' OR 'cgMLST' OR 'phylogeny) AND 
+2010[PDAT] : 2020[PDAT]
+```
+
+This search returned `706` bibliographic results. All those bibliographic references 
+as well as associated abstracts where imported in `Zotero v5.0.82` software. 
+We then exported this reference collection in text format, with `.ris` extension.
+
+We performed co-occurence network analysis between words with the package 
+`litsearch` [@grames2019] in 
+R`r paste(version$major, version$minor, sep = ".")` [@rcoreteam2019] 
+to be able find connections between keywords (ie. identification of words frequently
+associated together). Note that keywords are defined as co-occuring words and 
+therefore are not singleton words
+
+
+```{r define_paths_import_search}
+# DEFINE
+# Put here your directory (/ at the end) and file na,e
+my_search_directory <- "/home/evezeyl/Dropbox/GITS/Pipeline_Listeria/evfi/search/"
+my_search_file <- "pubmed_result.ris"
+```
+ 
+```{r import_deduplicate}
+my_match_function_param <- "stringdist"
+
+import_search <- litsearchr::import_results(file =  
+                 paste(my_search_directory, my_search_file, sep = "/"), verbose = TRUE)
+# Original function was not really functional yet
+# so modified to arrabge equivalent
+no_duplicates <- synthesisr::deduplicate(import_search, match_by = "title", 
+                            match_function = "stringdist", to_lower = TRUE, 
+                            rm_punctuation = TRUE)
+
+nb_results_preliminary_search <- nrow(no_duplicates)
+```
+The result of the preliminary search were imported in R (`.ris`) and checked for 
+duplicated records using "`r my_match_function_param`" match function. 
+
+As we we did not find any duplicate bibliographic records, our final number of 
+bibliographic references used for keywords refinment is 
+`r nb_results_preliminary_search`. 
+
+```{r extracting keywords}
+tagged_keywords <- 
+    litsearchr::extract_terms(
+    keywords = no_duplicates$keywords,
+    method = "tagged",
+    min_freq = 2,
+    ngrams = TRUE,
+    min_n = 2,
+    language = "English")
+
+infered_keywords <-
+  litsearchr::extract_terms(
+    text = paste(no_duplicates$title, no_duplicates$abstract),
+    method = "fakerake",
+    min_freq = 2,
+    ngrams = TRUE,
+    min_n = 2,
+    language = "English"
+  )
+```
+
+```{r choose keyword usage}
+#If you only want to run only with keywords infered from abstract and title: # the line with `TRUE`
+run_all <- TRUE
+#run_all <- FALSE
+```
+
+
+```{r naive search}
+if (run_all) {
+    all_keywords <- unique(append(infered_keywords, tagged_keywords))
+    keyword_sentence <- "both data-base designed keywords and summary scanning"
+} else {
+    all_keywords <- unique(infered_keywords)
+    keyword_sentence <- "solely data-base designed keywords"
+    }
+        
+
+naivedfm <-
+  litsearchr::create_dfm(
+    elements = paste(no_duplicates$title, no_duplicates$abstract),
+    features = all_keywords
+  )
+
+naivegraph <-
+  litsearchr::create_network(
+    search_dfm = as.matrix(naivedfm),
+    min_studies = 2,
+    min_occ = 2
+  )
+```
+We used `r keyword_sentence` to produce the co-occurence network, with the 
+`fakerake`function, mimiccing the RAKE algorithm.
+
+```{r define_cuoff_method_parameters}
+# This you can play with
+my_imp_method <- "strength"
+used_cutoff <- .80
+```
+
+
+```{r filtering_nodes_by_strength}
+# do not modify
+cutoff <-
+  litsearchr::find_cutoff(
+    naivegraph,
+    method = "cumulative",
+    percent = used_cutoff,
+    imp_method = my_imp_method
+  )
+
+reducedgraph <-
+  litsearchr::reduce_graph(naivegraph, cutoff_strength = cutoff[1])
+
+searchterms <- litsearchr::get_keywords(reducedgraph)
+
+keywords_to_review <- vcount(reducedgraph)
+```
+
+
+We used the cumulative method with a default cutoff of `r used_cutoff*100`% on 
+the co-occurence network, (!meaning it kept 80% removed the most abundant) with 
+the `r my_imp_method`method to eliminate the hightest connected nodes which are
+associated with large number connections but reflecting unspecific word combinations. 
+This gave us `r keywords_to_review` keywords to review. 
+
+```{r Creating the table}
+#tkplot(reducedgraph)
+#plot.igraph(reducedgraph)
+#degree(reducedgraph, mode = "total")
+sorted <- as.data.frame(sort(igraph::strength(reducedgraph), decreasing = T), 
+                        row.names = NULL)
+sorted <- cbind(row.names(sorted), data.frame(sorted, row.names = NULL))
+colnames(sorted) <- c("keyword", "strength_nodes")
+sorted[, c("group", "keep_keyword", "reason", "retained_keyword")] <- NA
+most_connected_keyword <- as.character(sorted[1, "keyword"])
+```
+
+
+Our most connected keyword node was `r most_connected_keyword` which we had deemed
+to be the absolute requirement of keyword within our definitive search, according 
+to our objective that bibliography must contain at least this species name. 
+
+We exported a table contening all potential keywords and their associated node 
+`strength` (eg. degree of connectivity - right?). 
+
+>! is is ok then after to only use one as determinant? 
+
+```{r exporting table}
+write.table(sorted, file = "naive_keywords.csv", quote = F, sep = ",", col.names = NA)
+```
+
+```{r define our keywords}
+# ! that work you will have to do - if you choose to use * do not put them before last word and put at the end of word 
+# ! do not use * for keywords that did not exist 
+# Mandatory
+mandatory <- c("Listeria monocytogenes")
+#Essential
+complete_genome_keywords <- c("whole genom*", "core genome", "complete genome", 
+                              "hight-throughput", "next-generation sequenc*", "genome sequenc*")
+
+epidemiology_keywords <- c("surveillance", "outbreak", "molecular epidemio*", 
+                        "genomic epidemi*",  "epidem*", "persisten*", "survey", 
+                        "outbreak management", "monitoring")
+# accessory
+insitute_keywords <- c("national reference laboratory", "public health laborator*")
+
+typing_keywords <- c("cgMLST", "clonal complex", "molecular typing", "sequence typing" )
+
+analyses_keywords <- c("clonal group", "cluster", "related*", "snp", 
+                       "single nucleotide polymorphism", "phylogen*", "phylogenetic analysis")
+
+bioinformatics_keywords <- c("bioinformatic*", "pipeline", "software")
+# epidemio left aside: "detection"  too vague   
+# "control strategies"    "epidemiological investigation" covered by other
+# "source tracking" an application
+# "multiple state" "epidemic clone" covered "sporadic*" outbreak description
+# "production" "food process*" "food safety" "ready-to-eat" "processing plant" "processing facility" "production facility"
+# "processing environment" # we do not want to restrict and they should be covered
+```
+We scanned the keyword file and grouped relevant keywords according to 3 main categories: 
+- 1 mandatory keyword: `r mandatory`
+- 2 keywords groups with essential keywords: 
+    - relating to Whole Genome Sequencing `r complete_genome_keywords` 
+    - relating to `r epidemiology_keywords`
+- keywords that are optional (less critical) to refine the search: the themes are: 
+    - national/refence laboratories: `r insitute_keywords`
+    - methodological analysis keywords: (WGS typing, phylogeny, clustering) - `r analyses_keywords`
+    - specific bioinformatics therms: `r bioinformatics_keywords`
+    
+Notes that several keywords within the list overlap, because their are combination of tems.
+Therefore we tried to group keywords together using common root/suffix: ex: 
+`epidemiology epidemiological becomes epidemio*`
+
+Howver some databases do not handle very well truncated search, therefore you can automatically scan through the identified keywords
+and extend those
+
+```{r}
+# if used wildcards in definitions of your groups you can use this function to re-expand the definition
+# 2 will indicate the keywords extended
+mandatory2 <- extend_keywords_group(mandatory, all_keywords)
+complete_genome_keywords2 <- extend_keywords_group(complete_genome_keywords, all_keywords)
+epidemiology_keywords2 <- extend_keywords_group(epidemiology_keywords, all_keywords)
+insitute_keywords2 <- extend_keywords_group(insitute_keywords, all_keywords)
+typing_keywords2 <-  extend_keywords_group(typing_keywords, all_keywords)
+analyses_keywords2 <- extend_keywords_group(analyses_keywords, all_keywords)
+bioinformatics_keywords2 <- extend_keywords_group(bioinformatics_keywords, all_keywords)
+```
+
+
+Themes subgroups have been defined for both essential keywords and optional keywords. We added some keywords that were not reported during the preliminary search (journal articles) but that we had encountered while previous reading of reports from reference institutions setting in place pipelines. 
+>! we migh want to indicate (in this way do a substract of content %in% )
+
+The *bolean* search with will be constructed such as the mendatory keyword and one of the essential keyword and one of the optional 
+keyword must be included within the search parameters: (mandatory keyword) AND (essential keyword groupA) AND(essential groupB) AND (optional keywors). 
+Note that within group per theme: must be either one of them (OR statement)
+
+```{r make your choice: classification}
+# you need to adjust this
+# for search with truncation
+my_mandatory <- list(mandatory) # incase want several mandatory
+my_essential <- list(complete_genome_keywords, epidemiology_keywords)
+my_accessory <- list(insitute_keywords,typing_keywords,analyses_keywords, bioinformatics_keywords)
+
+# for search without truncation
+my_mandatory2 <- list(mandatory2) # incase want several mandatory
+my_essential2 <- list(complete_genome_keywords2, epidemiology_keywords2)
+my_accessory2 <- list(insitute_keywords2,typing_keywords2,analyses_keywords2, bioinformatics_keywords2)
+```
+
+
+```{r creating our search sentence, eval=FALSE, include=FALSE}
+# for bolean search with truncation - no quote
+my_search_string <- build_search_string(my_mandatory, my_essential, my_accessory, quote_option = F)
+
+# for bolean search with truncation - quote
+my_search_string_q <- build_search_string(my_mandatory, my_essential, my_accessory, quote_option = T)
+
+# for bolean search without truncation 
+my_search_string2 <- build_search_string(my_mandatory2, my_essential2, my_accessory2, quote_option = F)
+```
+This consequencly defines our search as: `r my_search_string`
+
+## Literature search done
+
+We made a structure so you can report your results (in a .csv datafile), then we will be
+able to reimport those later on to analyses the results. 
+
+
+```{r}
+my_systematic_search <- data.frame(database_name = "PubMed", 
+                                   url = "https://www.ncbi.nlm.nih.gov/pubmed/",
+                                   date = Sys.Date(), 
+                                   searched = as.character(my_search_string2), 
+                                   nb_hits = 178)
+
+write.table(my_systematic_search, file = "systematic_search_template.csv", 
+          quote = F, sep = "," , row.names = F)
+```
+
+### Database searching
+
+1. Pubmed
+
+Pubmed does not support truncation very well and do not recommend using quotes.
+Consequently we used the search sentance: `r my_search_string2`
+
+```{r}
+# or
+my_search_string2
+```
+
+The references were manually imported into Zotero under collection name: `Pubmed-2020-02-26`
+
+2. Google Scholar
+
+Recommended in Incognito mode (otherwise basing its results on previous searches)
+Compared with results wille connected - were the same (cannot import in Zotero if in incognito!)
+
+> tried with Quote nad not truncated did not work
+> truncates the search and reports way too many results
+
+```{r}
+my_search_string_google <- build_search_string(my_mandatory, my_essential, my_accessory, quote_option = F)
+my_search_string_google
+```
+
+So we rewrote our search as is: as it should emcompass more relevant term
+"Listeria monocytogenes" AND (genom* OR hight-throughput OR next-generation sequenc*) AND (surve* OR outbreak OR epidemi* OR persisten* OR monitoring) AND (national reference laboratory OR public health laborator*)
+
+WAS REMOVED 
+OR cgMLST OR clonal complex OR molecular typing OR sequence typing OR clonal group OR cluster OR related* OR snp OR single nucleotide polymorphism OR phylogen* OR phylogenetic analysis OR bioinformatic* OR pipeline OR software)"
+
+Restricted the range of years from 2010 to 2020
+
+Bugged on page 8 when exporting (detected as Robot) - closed and relaunched the search and went through capchat and then at p 15 - and then was blocked ... 
+
+```{r}
+# records identified through database searching = Total count of paper founds
+total_db_records <- 320
+```
+
+Total count of paper founds: `r total_db_records`
+
+### Records identified through other sources
+
+> same, describe how found them
+- other source : what I had previously selected for reading by several manual search in google scholar, ECDC ...
+
+- [ ] need to remove from this list my articles for prisma review ! marked - should not have been in the count!
+
+
+```{r # Records identified through other sources}
+# Records identified through other sources
+# previous search without systematic search of reports osv: orion_previous
+total_other_sources <- 100
+
+```
+
+### deduplication records 
+We merged all records together and deduplicated the records
+- 
+
+! here we need to find a good search 
+
+```{r}
+total_no_duplicates <- 378
+```
+```{r}
+# > there we will need to export the no_duplicates with title and abstract to do the screening
+table_for_screening <- NA
+# adding columns that we will have to fill
+# TA relevance screen : Title Abstract Relevance Screen Exclusion Criteria
+# FT full text inclusde (T/F) -> decide if include for full text reading
+# FT_exclusion_criteria -> reading/screening full ext -> decide to include or exclude
+# FT_excluded: T/F 
+table_for_screening[ , c("TA_RSE_crieteria", "FT_include", "FT_exclusion_criteria", "FT_excluded")] <- NA
+write.table(table_for_screening, file = "table_for_screening.csv", 
+          quote = F, sep = "," , row.names = F)
+```
+
+
+## Title/abstract relevance inclusion criteria
+
+Relevance criteria:
+Were difficult to evaluate. After starting screening
+- screened with titles first (had hidden other information such as author, date...)
+- excluded those that did not appear relevant (but gave keywords)
+
+Then screened those that were selected to read through abstract. Realized that it was difficult for me to sort by relevant criteria
+based on reading abstract (seems also papers might have been partially sorted by relevance due to search motor use)
+- so instead try to write a short sentence with reference associated for those I thought were insteresting - why noted in spreadsheet - and tried to classify by priority of reading.
+
+- higher priority was given: 
+  -- because were right on subject
+  -- because it added an aspect I did not see/think about before
+  -- because it presented methods comparisons, (pipelines or db)
+  -- some paper were tagged with scann through because it was difficult to access relevance
+
+- low priority were given to
+  -- what appeared to be pure descriptive outbreak descriptions
+  -- what might or might not contain important information
+  -- old review/method papers <2015-2017
+  -- papers using old methods (MLVA) but not obviously comparing with WGS
+
+Yes maybe not the most objective... (But that is why its not an AI that is doing that right now...)
+But we categorized all the aspects by points - with what I found could be significant in the abstract
+and notted reference - to be able to go back to those papers IF we feel that the study need to be extended
+
+
+
+```{r records screened for relevance}
+nb_screened_for_relevance <- NA
+nb_records_excluded <- NA
+full_text_eligibility <- total_no_duplicates - nb_records_excluded
+```
+
+Count after relevance reduction: `r full_text_eligibility`
+
+## Full text relevance exclusion criteria:
+
+```{r Full text relevance exclusion}
+nb_full_text_excluded <- NA
+full_text_synthesis <- full_text_eligibility - nb_full_text_excluded
+```
+
+Exclusion criteria:
+
+Count after relevance reduction: `r full_text_synthesis`
+
+
+## Full text inclusion summary:
+Summaryze what papers/reports were included in the study
+
+?! list or -> is it not enough to get the references
+
+Minireview of included papers
+
+## PRISMA workflow graph
+
+```{r}
+# graph did put names of elements necessary to build the graph 
+total_db_records
+total_other_sources
+total_no_duplicates
+nb_screened_for_relevance
+nb_records_excluded
+full_text_eligibility
+nb_full_text_excluded
+full_text_synthesis
+```
+
+## World cloud
+
+# References
+ 
+
+
